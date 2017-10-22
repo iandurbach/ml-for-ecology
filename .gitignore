@@ -1,0 +1,9 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+*.zip
+output/
+slides-intro/
+slides-trees/
+csv/
