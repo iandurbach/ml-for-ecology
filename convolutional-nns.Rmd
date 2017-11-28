@@ -1,0 +1,367 @@
+---
+title: "Convolutional neural networks"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Convolutional neural networks (CNNs) refer to a particular kind of neural network architecture that has proved enormously successful in dealing with data in which the input features exhibit some kind of spatial or temporal ordering. A surprisingly large number of data sets and applications fall into this category. For example:
+
+- **Images** display spatial ordering. We expect pixel values in nearby pixels to be similar, and if they are not similar this tells us something valuable (for example, that we have encountered an edge)
+- **Audio** or **acoustic** data displays temporal ordering. In music for example, the *sequence* of notes conveys important information. If you randomly reorder the notes in a symphony, you most likely end up with something that sounds very different, and very much worse, than the original. 
+- **Text** data is also ordered "temporally", in the same way that audio is. We have seen that bag-of-words models can give good predictive results, but it would be no surprise to learn that better results can be obtained if we look at the order in which words are combined.
+- **Video** data is both spatially and temporally ordered: it is a collection of images ordered through time.
+
+CNNs are designed to exploit the structure of ordered data. Their fundamental building block is the *convolution filter*, a small matrix of coefficients or "mask" that is placed "on top" the ordered data and slid "along" the data in the direction given by the natural ordering. At each step, the coefficients in the convolution filter are multiplied with the data they are currently sitting on top of, and this multiplication can amplify or dampen the features in the data in a vast number of ways. This is the way CNNs extract "meaning" from data.
+
+Each layer in a CNN consists of a user-specified number of these convolution filters, plus some additional operations and transformations. The output of one layer forms the input to the next. In this way the convolution filters in one layer operate on the outputs of convolution filters in the previous layer. In practice, this means that convolution filters in early layers tend to detect very simple patterns (like edges in images) and later layers combine these patterns into something much more elaborate (the letter "E", or a face, for example). For this reason most CNNs are deep CNNs - they have several hidden layers between their input and output layers.
+
+This notebook shows you how to fit CNNs to data in R. As in the previous lesson, there are two main goals: **understanding** what is going on in a CNN, which we'll do by looking at a spreadsheet example, and **implementing** CNNs on a larger scale.
+
+---
+
+
+```{r}
+library(keras)
+library(dplyr)
+library(ggplot2)
+```
+
+
+```{r}
+mnist <- dataset_mnist()
+```
+
+## Training a simple CNN on the MNIST data set
+
+This section fits a simple CNN to the same MNIST data we used above. The section shows the way in which convolutional layers are implemented by Keras i.e. how to specify convolution filters and associated operations like max pooling. The example is taken from the RStudio Keras example pages [here](https://keras.rstudio.com/articles/examples/index.html).
+
+### Data preparation
+
+We start by doing exactly the same data preparation as in the previous example (we don't need to rerun this, but just to make it clearer what we're doing).
+
+
+```{r}
+# separate out x and y values, and test and training data
+x_train <- mnist$train$x
+y_train <- mnist$train$y
+x_test <- mnist$test$x
+y_test <- mnist$test$y
+
+# convert integers to floating point
+x_train <- x_train / 255
+x_test <- x_test / 255
+
+# one-hot encoding
+y_train <- to_categorical(y_train, 10)
+y_test <- to_categorical(y_test, 10)
+```
+
+The first important difference between the CNN we fit here and the previous example is the dimensions of the input data. In the previous example, we "unravelled" or "flattened" each 28 x 28 image into a vector of length 784. The input data was a matrix with the same number of rows as input samples (60,000 in the training sample) and 784 columns. 
+
+The dimension of the input for a 2-D CNN such as would be used for image classification is given by 
+```
+c(number of observations, image width in pixels, image height in pixels, number of values per pixel)
+```
+The number of values per pixel would usually be either 1 (grayscale images) or 3 (RGB images). In other words, each input observation (a grayscale image) is a 28 x 28 x 1 matrix (called a "tensor").
+
+
+```{r}
+dim(x_train) <- c(nrow(x_train), 28, 28, 1) 
+dim(x_test) <- c(nrow(x_test), 28, 28, 1)
+```
+
+We print out the number of images in the training and test sets below.
+
+
+```{r}
+cat('x_train_shape:', dim(x_train), '\n')
+cat(nrow(x_train), 'train samples\n')
+cat(nrow(x_test), 'test samples\n')
+```
+
+### Model building
+
+#### Defining the model
+We use a sequential model as before. The only difference is that we are now stacking up convolutional layers.
+
+
+```{r}
+model <- keras_model_sequential()
+```
+
+The main differences between the feedforward network in the previous section and the CNN we're now fitting is in the next code block. Note that the "dense" (fully connected) hidden layers (`layer_dense()`) have been replaced by a new layer type called `layer_conv_2d()`. There are two convolutional hidden layers.
+
+* The first hidden layer must specify the shape of the input, as before. That is done using the `input_shape` argument.
+* For any convolutional layer, we need to specify:
+    * The number of convolution filters to use in that layer
+    * The size of those filters (number of pixels wide, number of pixels high)
+    * The activation function
+* After any convolutional layer we *may* add a max pooling layer that reduces the dimensionality of the output of that layer (see spreadsheet explanation), or a dropout layer. Here, we have added dropout after layer 1 and max pooling after layer 2.
+* The final hidden convolutional layer must be "flattened" before being connected to the output layer, using `layer_flatten()`. We could have added additional dense layers between the convolutional layers and the output layer if we wanted to.
+    
+
+
+
+```{r}
+model %>%
+  layer_conv_2d(filters = 32,                      # number of convolution filters in conv layer 1
+                kernel_size = c(3,3),              # use 3 x 3 convolution filter in conv layer 1
+                input_shape = c(28, 28, 1)) %>%    # shape of input data
+  layer_activation('relu') %>%                     # activation function in conv layer 1
+  layer_dropout(rate = 0.20) %>%                   # apply 20% dropout after conv layer 1
+  layer_conv_2d(filters = 64,                      # number of convolution filters in conv layer 2
+                kernel_size = c(3,3)) %>%          # also use 3 x 3 filter in conv layer 2
+  layer_activation('relu') %>%                     # activation function in conv layer 2
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>%    # apply max pooling after conv layer 2
+  layer_flatten() %>%                              # flatten output into a vector
+  layer_dense(units = 10, activation = 'softmax')  # fully connected to output layer
+```
+
+
+```{r}
+summary(model)
+```
+
+#### Compiling the model
+
+The remainder of the model building proceeds as before. We compile the model after adding our choice of loss function and optimizer, fit the model to training data, and evaluate it on the test data.
+
+
+```{r}
+model %>% compile(
+  loss = 'categorical_crossentropy',
+  optimizer = 'rmsprop',
+  metrics = c('accuracy')
+)
+```
+
+#### Training the model
+
+
+```{r}
+model %>% fit(
+  x_train, y_train,
+  batch_size = 128,
+  epochs = 1,
+  verbose = 1,
+  validation_split = 0.2
+)
+```
+
+#### Evaluating the model on test data
+
+
+```{r}
+model %>% evaluate(x_test, y_test)
+```
+
+## Saving your model
+
+Something we haven't talked about yet is saving your model. Neural networks can take a long time to run and so most of the time you'll want to save your final model so that you can load it back in for later sessions. 
+
+The **keras** package provides a few options for saving a model:
+
+### Save the whole model
+The `save_model_hdf5()` function basically saves the entire model in a single file. It saves the model architecture (so you can re-compile), the model weights, and the state of the optimizer (so you can resume training where you left off). 
+
+
+```{r}
+save_model_hdf5(model, "my_mnist_model.h5")
+```
+
+You can load the model later with load_model_hdf5().
+
+
+```{r}
+model <- load_model_hdf5("my_mnist_model.h5")
+
+scores <- model %>% evaluate(x_test, y_test)
+cat('Test loss:', scores[[1]], '\n')
+cat('Test accuracy:', scores[[2]], '\n')
+```
+
+### Save the model weights only
+
+The `save_model_weights_hdf5()` function just saves the model weights. 
+
+
+```{r}
+save_model_weights_hdf5(model, "my_model_weights.h5")
+```
+
+You can load the weights later with `load_model_weights_hdf5()`. When you use `save_model_weights_hdf5()`, the architecture of the model is not saved, so you need to be careful when you reload the model. There are two main options: reloading the weights on top of the same model architecture you used to fit the weights, or reloading the weights on top of a new model architecture. The latter is useful if you want to keep certain layers of a model, but also modify or add new layers.
+
+#### Reloading the weights on top of the same model architecture 
+
+In cases where you want to use the same architecture as was used to create the model, you need to define the model the same way as you did when the weights were saved, and set the `by_name = FALSE` (the default) in `load_model_weights_hdf5()`. Note that layers that don't have weights are not taken into account in the topological ordering, so adding or removing layers is fine as long as they don't have weights. For example, removing the dropout layers in `model2` below has no effect (because we're not estimating the weights, just applying the saved ones).
+
+Let's set up a new model called `model2` which is exactly the same as the previous model.
+
+
+```{r}
+model2 <- keras_model_sequential() 
+model2 %>%
+  layer_conv_2d(filters = 32,                      # number of convolution filters in conv layer 1
+                kernel_size = c(3,3),              # use 3 x 3 convolution filter in conv layer 1
+                input_shape = c(28, 28, 1)) %>%    # shape of input data
+  layer_activation('relu') %>%                     # activation function in conv layer 1
+  layer_dropout(rate = 0.20) %>%                   # apply 20% dropout after conv layer 1
+  layer_conv_2d(filters = 64,                      # number of convolution filters in conv layer 2
+                kernel_size = c(3,3)) %>%          # also use 3 x 3 filter in conv layer 2
+  layer_activation('relu') %>%                     # activation function in conv layer 2
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>%    # apply max pooling after conv layer 2
+  layer_flatten() %>%                              # flatten output into a vector
+  layer_dense(units = 10, activation = 'softmax') %>%  # fully connected to output layer
+  compile(
+  loss = 'categorical_crossentropy',
+  optimizer = 'rmsprop',
+  metrics = c('accuracy')
+)
+```
+
+We now load the weights we previously saved (from the `model` object) and apply these to the new `model2`. We get exactly the same test accuracy as before (unsurprisingly!).
+
+
+```{r}
+model2 %>% load_model_weights_hdf5("my_model_weights.h5", by_name = FALSE)
+
+scores <- model2 %>% evaluate(x_test, y_test)
+cat('Test loss:', scores[[1]], '\n')
+cat('Test accuracy:', scores[[2]], '\n')
+```
+
+## Classifying invasive species
+
+In this section we'll build a CNN to predict whether an image contains an invasive species or not. The data is taken from [this Kaggle problem](https://www.kaggle.com/c/invasive-species-monitoring). The data set contains pictures taken in a Brazilian national forest. In some of the pictures there is Hydrangea, a beautiful invasive species original of Asia. We would like to predict the presence of the invasive species. Some of the code in this example is taken from one of the Kaggle competition "kernels" (code people make publicably available) [here](https://www.kaggle.com/ogurtsov/0-99-with-r-and-keras-inception-v3-fine-tune).
+
+
+We store our images in a very particular way:
+
+* Separate folders for training, test, and validation images
+* Within each folder (e.g. within the training folder), separate folders for each class (e.g. a folder for invasives and a folder for non-invasives).
+
+I recommend creating a folder called "sample" that has exactly the same folder structure as above, but just contains a small number (10 or so) images in each folder. This will allow you to test whether your code is working without having to wait for a long time. Once you are satisfied your code is running, you can just change the directory reference to the main set of folders.
+
+We start by specifying where our training, test, and validation images are (so, later on, remove the reference to "sample" below).
+
+
+```{r}
+train_directory <- "data/invasives/sample/train/"
+validation_directory <- "data/invasives/sample/validation/"
+test_directory <- "data/invasives/sample/test/"
+
+# once you are satisfied the code is working, run full dataset
+# train_directory <- "data/invasives/train/"
+# validation_directory <- "data/invasives/validation/"
+# test_directory <- "data/invasives/test/"
+```
+
+Each image will be resized to `img_width` $\times$ `img_height`, specified below (can also leave this step out and use the images as is).
+
+
+```{r}
+img_height <- 224
+img_width <- 224
+batch_size <- 16
+```
+
+Next we calculate the number of images in our training, validation, and test samples. We do this by counting up the total number of files in the directories (note this means you should only have the image files in each directory)
+
+
+```{r}
+train_samples <- length(list.files(paste(train_directory,"invasive",sep=""))) +
+    length(list.files(paste(train_directory,"non_invasive",sep="")))
+
+validation_samples <- length(list.files(paste(validation_directory,"invasive",sep=""))) +
+    length(list.files(paste(validation_directory,"non_invasive",sep="")))
+
+test_samples <- length(list.files(paste(test_directory,"invasive",sep=""))) +
+    length(list.files(paste(test_directory,"non_invasive",sep="")))
+```
+
+The next block uses a handy Keras function called `flow_images_from_directory()`, which generates batches of data from images in a directory.
+
+
+```{r}
+train_generator <- flow_images_from_directory(
+  train_directory, 
+  generator = image_data_generator(), ,
+  target_size = c(img_height, img_width),
+  color_mode = "rgb",
+  class_mode = "binary", 
+  batch_size = batch_size, 
+  shuffle = TRUE,
+  seed = 123)
+
+validation_generator <- flow_images_from_directory(
+  validation_directory, 
+  generator = image_data_generator(), ,
+  target_size = c(img_height, img_width), 
+  color_mode = "rgb", 
+  classes = NULL,
+  class_mode = "binary", 
+  batch_size = batch_size, 
+  shuffle = TRUE,
+  seed = 123)
+
+test_generator <- flow_images_from_directory(
+  test_directory, 
+  generator = image_data_generator(),
+  target_size = c(img_height, img_width), 
+  color_mode = "rgb", 
+  class_mode = "binary", 
+  batch_size = 1,
+  shuffle = FALSE) 
+```
+
+Define and compile the CNN in a similar way to before. We now have a binary classification problem, so we use a single output neuron with a sigmoid activation.
+
+
+```{r}
+model3 <- keras_model_sequential() 
+model3 %>%
+  layer_conv_2d(filters = 16,                      # number of convolution filters in conv layer 1
+                kernel_size = c(3,3),              # use 3 x 3 convolution filter in conv layer 1
+                input_shape = c(img_height, img_width, 3)) %>%    # shape of input data
+  layer_activation('relu') %>%                     # activation function in conv layer 1
+  layer_dropout(rate = 0.20) %>%                   # apply 20% dropout after conv layer 1
+  layer_conv_2d(filters = 16,                      # number of convolution filters in conv layer 2
+                kernel_size = c(3,3)) %>%          # also use 3 x 3 filter in conv layer 2
+  layer_activation('relu') %>%                     # activation function in conv layer 2
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>%    # apply max pooling after conv layer 2
+  layer_flatten() %>%                              # flatten output into a vector
+  layer_dense(units = 1, activation = 'sigmoid') %>%  # fully connected to output layer
+  compile(
+  loss = 'binary_crossentropy',
+  optimizer = 'rmsprop',
+  metrics = c('accuracy')
+)
+```
+
+Fit the model. Note that this is slightly different from before - we use a function called `fit_generator()`, because we have used the `flow_images_from_directory()` function to "generate" batches of images (see above).
+
+
+```{r}
+model3 %>% fit_generator(
+  train_generator,
+  steps_per_epoch = as.integer(train_samples / batch_size), 
+  epochs = 20, 
+  validation_data = validation_generator,
+  validation_steps = as.integer(validation_samples / batch_size),
+  verbose = 1)
+
+```
+
+Evaluate the model on test data.
+
+
+```{r}
+model3 %>% evaluate_generator(test_generator, steps = test_samples)
+```
+
+### Try this!
+
+Now try fit the full dataset, and vary the CNN architecture.
