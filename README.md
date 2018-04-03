@@ -6,7 +6,7 @@ It is aimed at ecologists doing some form of classification - either manually or
 
 The workshop covers two machine learning methodologies: tree-based methods, and neural networks. All analysis will be done using R, using existing packages for tree-based methods (rpart, randomForest, gbm) and neural networks (keras).
 
-Upcoming workshop dates:
+Previous workshops:
 * 23-25 October 2017 @ Centre for Ecological Sciences, Indian Institute of Science, Bangalore
 * 20-22 November 2017 @ African Institute for Mathematical Sciences, Cape Town
 
